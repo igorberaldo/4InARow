@@ -8,9 +8,8 @@
 #define E P3_6
 #define E1 P3_7
 
-/* //Definição das variaveis globais onde table serve para guardar o estado atual do jogo, usando o endereço correspondente da CGRAM */
-unsigned char position = 0, mult = 0;
-int time = 0;
+/* //Variable declaration */
+unsigned char position = 0, leds;
 unsigned char player = 0x07, winner = 0x00;
 unsigned char table[6][7] = { {0, 0, 0, 0, 0, 0, 0},
                               {0, 0, 0, 0, 0, 0, 0},
@@ -18,11 +17,11 @@ unsigned char table[6][7] = { {0, 0, 0, 0, 0, 0, 0},
                               {0, 0, 0, 0, 0, 0, 0},
                               {0, 0, 0, 0, 0, 0, 0},
                               {0, 0, 0, 0, 0, 0, 0}};
-/* // isPlaying é usado para dizer se os perifericos já foram configurados ou não, isGameOn é usado para dizer que o jogo esta rolando */
+/* // isPlaying is used to make sure that all hardware is configured, and isGameOn is used to check whetheer the game is on or not */
 unsigned char isPlaying = 0, isGameOn = 0;
 unsigned char display = 0;
 
-/* //Protótipo de funções */
+/* //Function prototypes */
 void lcdWrite(unsigned char valor, unsigned char TipoDados);
 void lcdConfig(void);
 void lcdCgram(void);
@@ -31,19 +30,18 @@ void lcdClear(void);
 void inicio(void);
 int checkTable(void);
 void resetTable(void);
-void checkWinner(unsigned char);
+void checkWinner(void);
 void checkDiagonal(int);
 void delay_100us(void);
 void delay_1ms(void);
 void delay_ms(unsigned int _delay);
 
-
-/* //Função de interrupção externa 1, verifica se o jogo está rolando e atualiza a posição do cursor que seleciona a coluna que
-// a peça será largada */
+/* //Extern interrupt function 1, verifies wheter the game is on, updates the cursor position and the current column  */
 void avanco_isr(void) __interrupt(2)
 {
     if(isGameOn == 1)
     {
+    	P2 ^= 0xFF;
         lcdCursor(position, 0);
         lcdWrite(0x20, 1);
         position++;
@@ -54,12 +52,12 @@ void avanco_isr(void) __interrupt(2)
     }
 }
 
-/* //Função de interrupção externa 0, envia o comando para soltar a peça na coluna selecionada, e verifica as condições do jogo
-//com auxilio da função checkTable, caso ela retorne 0 significa que a coluna esta cheia e não pode adicionar outra peça */
+/* //Extern interrupt function 0, sends the command to drop the piece in the current column if there is space for it, and verifies whether there is a winner using the checkWinner function */
 void soltar_isr(void) __interrupt(0)
 {
     if(isGameOn == 1)
     {
+    	P2 ^= 0xFF;
         if(checkTable() == 1)
         {
             display = 0;
@@ -70,60 +68,18 @@ void soltar_isr(void) __interrupt(0)
             else	player = 0x07;
             lcdCursor(0,0);
             lcdWrite(player, 1);
-            checkWinner(winner);
+            checkWinner();
         }
     }
 }
 
-/* //Função de interrupção do timer faz o calculo para que a interrupção ocorra a cada 1 ms e incrementa o valor do time,
-//que serve para dizer o tempo de jogo */
-void timer_isr(void) __interrupt(3)
-{
-    unsigned char a = 12;
-    if(isGameOn == 1)
-    {
-        mult++;
-        if(mult >= a)
-        {
-            mult = 0;
-            time++;
-            display = 1;
-            lcdCursor(13,1);
-            if(time > 9)
-            {
-                if(time > 99)
-                {
-                    if(time > 999)
-                    {
-                        lcdWrite(time/10 + '0', 1);
-                        lcdWrite(time%10 + '0', 1);
-                        lcdWrite(time%100 + '0', 1);
-                    }
-                    else
-                    {
-                        lcdWrite(time/10 + '0', 1);
-                        lcdWrite(time%10 + '0', 1);
-                    }
-                }
-                else
-                {
-                    lcdWrite(time/10 + '0', 1);
-                    lcdWrite(time%10 + '0', 1);
-                }
-            }
-            else	lcdWrite('0' + time, 1);
-            display = 0;
-        }
-    }
-}
-
-/* //Função de interrupção serial serve para parar ou iniciar o jogo dependendo do valor recebido no SBUF */
+/* //Serial interrupt function it is used to start and stop the game sending any command through the serial interface */
 void serial_isr(void) __interrupt(4)
 {
     unsigned char dado;
     RI = 0;
     dado = SBUF;
-    if(dado == 0x01)
+    if(isGameOn == 0)
     {
         isPlaying = 0;
         lcdClear();
@@ -133,11 +89,9 @@ void serial_isr(void) __interrupt(4)
         lcdCursor(0,0);
         lcdWrite(player, 1);
         display = 1;
-        lcdCursor(13, 1);
-        lcdWrite('0', 1);
         display = 0;
     }
-    else if(dado == 0x02)
+    else
     {
         isGameOn = 0;
         inicio();
@@ -145,7 +99,7 @@ void serial_isr(void) __interrupt(4)
     }
 }
 
-/* //Função principal, usada somente no inicio da execução para inicializar todos os perifericos */
+/* //Main function it is used to initialize all hardware needed */
 void main(void)
 {
     lcdConfig();
@@ -160,10 +114,19 @@ void main(void)
     TH1 = 253;
     TR1 = 1;
     PS = 1;
-    while (1);
+    while (1)
+    {
+    	if(!isPlaying)
+    	{
+    	    P2 = ~leds;
+    	    leds = leds << 1;
+    	    if(leds == 0x00) leds = 0x01;
+    	}
+    	delay_ms(20);
+    }
 }
 
-/* //Função auxiliar que retorna a variavel table para seu valor inicial, quando o jogo acaba ou é interrompido */
+/* //This function is used to clean the memory table when the game is finished or interrupted */
 void resetTable(void)
 {
     unsigned char i, j;
@@ -176,10 +139,10 @@ void resetTable(void)
     }
 }
 
-/* //Função auxiliar que verifica o vencedor, e caso haja um para o jogo volta para o menu inicial e diz qual jogador que ganhou */
-void checkWinner(unsigned char val)
+/* //This function is responsible to check whether or not there is a winner in the game and if so it set the winner message and stops the game */
+void checkWinner(void)
 {
-    if(val != 0x00)
+    if(winner != 0x00)
     {
         resetTable();
         isGameOn = 0;
@@ -192,11 +155,12 @@ void checkWinner(unsigned char val)
         lcdWrite('o', 1);
         lcdWrite('n', 1);
         winner = 0x00;
-        isGameOn = 0;
+        isPlaying = 0;
+        leds = 0x01;
     }
 }
 
-/* //Função auxiliar, uma das principais, ela checa qual deve ser o caracter a ser escrito e a linha quando a função soltar é
+/* //This function checks Função auxiliar, uma das principais, ela checa qual deve ser o caracter a ser escrito e a linha quando a função soltar é
 //ativada, ela também checa se existe 4 peças identicas na vertical e/ou horizontal a partir da ultima peça solta para determinar
 //se existe um vencedor.
 //caso retorne 0 significa que aquela coluna selecionada está cheia e a peça não deve ser solta */
@@ -354,7 +318,7 @@ int checkTable(void)
     return 0;
 }
 
-/*Função para checar a diagonal da ultima peça solta*/
+/*This function checks the diagonal from the last dropped piece, and it receives the piece's row number */
 void checkDiagonal(int i)
 {
     unsigned char val;
@@ -372,71 +336,68 @@ void checkDiagonal(int i)
         winner = player;
 }
 
-/* //Função auxiliar que forma o menu inicial do jogo, o qual mostra o nome do jogo e dos participantes do grupo */
+/* //This function is responsible to configure and show the main menu, which shows name of the game and the developer */
 void inicio(void)
 {
     if(isGameOn == 0)
     {
-        time = 0;
-        mult = 0;
+    	P2 = 0xFF;
         isGameOn = 0;
         isPlaying = 0;
         lcdClear();
         isPlaying = 1;
         display = 0;
         lcdCursor(1,0);
-        lcdWrite('J', 1);
-        lcdWrite('o', 1);
-        lcdWrite('g', 1);
-        lcdWrite('o', 1);
-        lcdWrite(0x20, 1);
         lcdWrite('4', 1);
         lcdWrite(0x20, 1);
-        lcdWrite('e', 1);
-        lcdWrite('m', 1);
-        lcdWrite(0x20, 1);
-        lcdWrite('l', 1);
         lcdWrite('i', 1);
         lcdWrite('n', 1);
-        lcdWrite('h', 1);
+        lcdWrite(0x20, 1);
         lcdWrite('a', 1);
+        lcdWrite(0x20, 1);
+        lcdWrite('r', 1);
+        lcdWrite('o', 1);
+        lcdWrite('w', 1);
+        lcdWrite(0x20, 1);
+        lcdWrite('g', 1);
+        lcdWrite('a', 1);
+        lcdWrite('m', 1);
+        lcdWrite('e', 1);
         display = 1;
         lcdCursor(0,0);
-        lcdWrite('R', 1);
-        lcdWrite('a', 1);
-        lcdWrite('f', 1);
-        lcdWrite('a', 1);
+        lcdWrite('D', 1);
+        lcdWrite('e', 1);
+        lcdWrite('v', 1);
         lcdWrite('e', 1);
         lcdWrite('l', 1);
+        lcdWrite('o', 1);
+        lcdWrite('p', 1);
+        lcdWrite('e', 1);
+        lcdWrite('d', 1);
         lcdWrite(0x20, 1);
-        lcdWrite('F', 1);
-        lcdWrite('r', 1);
-        lcdWrite('e', 1);
-        lcdWrite('i', 1);
-        lcdWrite('r', 1);
-        lcdWrite('e', 1);
+        lcdWrite('b', 1);
+        lcdWrite('y', 1);
         display = 1;
         lcdCursor(0,1);
-        lcdWrite('D', 1);
-        lcdWrite('a', 1);
-        lcdWrite('n', 1);
-        lcdWrite('i', 1);
-        lcdWrite('e', 1);
-        lcdWrite('l', 1);
+        lcdWrite('I', 1);
+        lcdWrite('g', 1);
+        lcdWrite('o', 1);
+        lcdWrite('r', 1);
         lcdWrite(0x20, 1);
-        lcdWrite('F', 1);
+        lcdWrite('R', 1);
+        lcdWrite('.', 1);
+        lcdWrite(0x20, 1);
+        lcdWrite('B', 1);
         lcdWrite('e', 1);
         lcdWrite('r', 1);
-        lcdWrite('n', 1);
         lcdWrite('a', 1);
-        lcdWrite('n', 1);
+        lcdWrite('l', 1);
         lcdWrite('d', 1);
-        lcdWrite('e', 1);
-        lcdWrite('s', 1);
+        lcdWrite('o', 1);
     }
 }
 
-/* //Função auxiliar para configurar os displays, ela usa a função lcdWrite para escreve os valores necessários de configuração */
+/* //This function is used to configure both LDC displays */
 void lcdConfig(void)
 {
     RW = 0;
@@ -447,7 +408,7 @@ void lcdConfig(void)
     lcdWrite(0x80, 0);
 }
 
-/* //Função auxiliar para escrever os caracteres especiais na CGRAM, ela usa a função lcdWrite para realizar seu trabalho */
+/* //This function is used to write the special characteres in the CGRAM memory of both displays */
 void lcdCgram(void)
 {
     lcdWrite(0x40, 0);
@@ -531,21 +492,23 @@ void lcdCgram(void)
     lcdWrite(0x00, 1);
 }
 
-/* //Função auxiliar para limpar o display, ela usa a função lcdWrite para enviar o código de limpeza para o display */
+/* //This function send the command to the display to clean it */
 void lcdClear()
 {
     lcdWrite(0x01,0);
 }
 
-/* //Função auxiliar usada para escrever no display, recebe o valor que será escrito no port que está conectado no display e
-//recebe o tipo de dados para mudar o estados do pino de controle para escrita ou configuração */
-void lcdWrite(unsigned char valor, unsigned char TipoDados)
+/* //this function is used to write in the display
+@Param: val is used to receive the value that will be written in the port that is connected to the displays
+@Param: cntrl is used to receive the value that will be attributed to the control pin
+*/
+void lcdWrite(unsigned char val, unsigned char cntrl)
 {
-    if (TipoDados == 1)
+    if (cntrl == 1)
         RS = 1;
     else
         RS = 0;
-    LCD = valor;
+    LCD = val;
     if(isPlaying == 1)
     {
         if(display == 0)
@@ -571,7 +534,9 @@ void lcdWrite(unsigned char valor, unsigned char TipoDados)
     }
 }
 
-/* //Função auxiliar usada para selecionar a linha e a coluna que será escrito o caracter, usando a lcdWrite */
+/* //This function is used to select a position in the display 
+@Param: pos receives the column value
+@Param: line receives the line value */
 void lcdCursor(unsigned char pos, unsigned char line)
 {
     pos &= 0x1F;
@@ -582,6 +547,7 @@ void lcdCursor(unsigned char pos, unsigned char line)
     lcdWrite(pos,0);
 }
 
+/*This function uses assembly registers to create a delay of a 100 microseconds*/
 void delay_100us(void)
 {
   __asm
@@ -593,6 +559,7 @@ loop_delay:
   __endasm;
 }
 
+/*This function uses assembly registers and the delay_100us to create a delay of a 1 milisecond*/
 void delay_1ms(void)
 {
   __asm
@@ -607,6 +574,8 @@ wait_delay_1ms:
   __endasm;
 }
 
+/*This function uses the delay_1ms to create a custom delay
+@Param: _delay receives the amount of miliseconds that will be delayed*/
 void delay_ms(unsigned int _delay)
 {
 	if(P0_0 == 1)	while(_delay--) delay_1ms();
